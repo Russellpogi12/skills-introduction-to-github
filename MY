@@ -1,0 +1,207 @@
+import tkinter as tk
+from tkinter import scrolledtext, simpledialog, messagebox, filedialog
+import threading
+import speech_recognition as sr
+import pyttsx3
+import json
+import subprocess
+import datetime
+import time
+from langdetect import detect
+from deep_translator import GoogleTranslator
+
+# CONFIG
+OLLAMA_MODEL = "mistral"
+APP_THEME = "dark"
+
+THEMES = {
+    "dark": {"bg": "#111", "fg": "#0f0", "input_bg": "#222", "input_fg": "#0f0"},
+    "light": {"bg": "#f0f0f0", "fg": "#000", "input_bg": "#fff", "input_fg": "#000"}
+}
+
+# Speech Init
+engine = pyttsx3.init()
+engine.setProperty('rate', 170)
+
+alarms = []
+chat_history = []
+
+# Language Detection and Translation
+def detect_language(text):
+    try:
+        lang = detect(text)
+        return 'en' if lang not in ['tl', 'en'] else lang
+    except:
+        return 'en'
+
+def translate_taglish(text, target_lang='en'):
+    try:
+        detected = detect_language(text)
+        if detected != target_lang:
+            return GoogleTranslator(source='auto', target=target_lang).translate(text)
+        return text
+    except:
+        return text
+
+# Ollama Response
+def ollama_respond(prompt):
+    try:
+        result = subprocess.run(
+            ["ollama", "run", OLLAMA_MODEL],
+            input=prompt.encode(),
+            capture_output=True,
+            timeout=60
+        )
+        output = result.stdout.decode().strip()
+        return output if output else "Pasensya na, walang sagot."
+    except Exception:
+        return "Error sa local AI."
+
+def speak_text(text):
+    engine.say(text)
+    engine.runAndWait()
+
+# Message Handling
+def send_message(event=None):
+    user_input = input_field.get()
+    if not user_input.strip():
+        return
+    chat_history.append(("🧑‍🚀 YOU", user_input))
+    redraw_chat()
+    input_field.delete(0, tk.END)
+    threading.Thread(target=process_ai_response, args=(user_input,)).start()
+
+def process_ai_response(user_input):
+    translated_input = translate_taglish(user_input)
+    ai_raw = ollama_respond(translated_input)
+    translated_output = translate_taglish(ai_raw, 'tl')
+    chat_history.append(("👽 AI", translated_output))
+    redraw_chat()
+    speak_text(translated_output)
+
+# Voice Input
+def listen_voice():
+    threading.Thread(target=voice_input).start()
+
+def voice_input():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        messagebox.showinfo("Voice Input","Listening ka na Kuya... 👂🎤")
+        audio = recognizer.listen(source)
+    try:
+        text = recognizer.recognize_google(audio)
+        input_field.delete(0, tk.END)
+        input_field.insert(0, text)
+        send_message()
+    except sr.UnknownValueError:
+        messagebox.showerror("Error","Hindi kita marinig Kuya")
+    except sr.RequestError:
+        messagebox.showerror("Error","Walang internet para sa voice")
+
+# Alarm Features
+def set_alarm(time_string=None):
+    if not time_string:
+        time_string = simpledialog.askstring("Set Alarm", "Anong oras Kuya? (HH:MM 24hr)")
+    try:
+        alarm_time = datetime.datetime.strptime(time_string, "%H:%M")
+        alarms.append(alarm_time.time())
+        messagebox.showinfo("Alarm Set", f"Alarm set for {alarm_time.strftime('%I:%M %p')}")
+        threading.Thread(target=alarm_checker, daemon=True).start()
+    except ValueError:
+        messagebox.showerror("Error", "Format should be HH:MM (24-hr clock)")
+
+def alarm_checker():
+    while True:
+        now = datetime.datetime.now().time()
+        for alarm in alarms:
+            if now.hour == alarm.hour and now.minute == alarm.minute:
+                speak_text("Kuya Russell, gising na! Alarm mo na to.")
+                messagebox.showinfo("ALARM!", "Kuya Russell, gising na! Alarm mo na to.")
+                alarms.remove(alarm)
+        time.sleep(30)
+
+# Save/Load Chat
+def save_chat():
+    file = filedialog.asksaveasfilename(defaultextension=".json")
+    if file:
+        with open(file, 'w') as f:
+            json.dump(chat_history, f)
+
+def load_chat():
+    file = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json")])
+    if file:
+        with open(file) as f:
+            data = json.load(f)
+            chat_history.clear()
+            chat_history.extend(data)
+            redraw_chat()
+
+# Theme
+def toggle_theme():
+    global APP_THEME
+    APP_THEME = "light" if APP_THEME == "dark" else "dark"
+    apply_theme()
+
+def apply_theme():
+    theme = THEMES[APP_THEME]
+    root.config(bg=theme["bg"])
+    chat_box.config(bg=theme["bg"], fg=theme["fg"])
+    input_field.config(bg=theme["input_bg"], fg=theme["input_fg"])
+    for btn in all_buttons:
+        btn.config(bg=theme["input_bg"], fg=theme["input_fg"])
+
+# Chat Box
+def redraw_chat():
+    chat_box.config(state='normal')
+    chat_box.delete(1.0, tk.END)
+    for role, text in chat_history:
+        chat_box.insert(tk.END, f"{role}: {text}\n\n")
+    chat_box.config(state='disabled')
+    chat_box.yview(tk.END)
+
+# UI Setup
+root = tk.Tk()
+root.title("👽🖤 POGI Russell AI Ultimate App")
+theme = THEMES[APP_THEME]
+root.config(bg=theme["bg"])
+
+chat_box = scrolledtext.ScrolledText(root, wrap=tk.WORD, state='disabled', bg=theme["bg"], fg=theme["fg"])
+chat_box.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+input_frame = tk.Frame(root, bg=theme["bg"])
+input_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+
+input_field = tk.Entry(input_frame, bg=theme["input_bg"], fg=theme["input_fg"])
+input_field.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
+input_field.bind("<Return>", send_message)
+
+send_button = tk.Button(input_frame, text="Send", command=send_message)
+send_button.pack(side=tk.LEFT)
+
+button_frame = tk.Frame(root, bg=theme["bg"])
+button_frame.pack(pady=(0,10))
+
+all_buttons = []
+
+voice_button = tk.Button(button_frame, text="🎤 Voice", command=listen_voice)
+voice_button.pack(side=tk.LEFT, padx=5)
+all_buttons.append(voice_button)
+
+save_button = tk.Button(button_frame, text="💾 Save", command=save_chat)
+save_button.pack(side=tk.LEFT, padx=5)
+all_buttons.append(save_button)
+
+load_button = tk.Button(button_frame, text="📂 Load", command=load_chat)
+load_button.pack(side=tk.LEFT, padx=5)
+all_buttons.append(load_button)
+
+theme_button = tk.Button(button_frame, text="🌗 Theme", command=toggle_theme)
+theme_button.pack(side=tk.LEFT, padx=5)
+all_buttons.append(theme_button)
+
+alarm_button = tk.Button(button_frame, text="⏰ Alarm", command=set_alarm)
+alarm_button.pack(side=tk.LEFT, padx=5)
+all_buttons.append(alarm_button)
+
+apply_theme()
+root.mainloop()
